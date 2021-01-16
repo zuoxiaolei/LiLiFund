@@ -7,6 +7,7 @@ import joblib
 import datetime
 import time
 from tqdm import tqdm
+import arrow
 
 home_dir = Path(__file__).parent
 data_dir = home_dir / 'data'
@@ -56,8 +57,8 @@ class Task(object):
         fund_day_start = fund_day_start.strftime('%Y-%m-%d')
 
         # 获取数据
-        fund_history = []
-        for fund_code in tqdm(self.load(self.SELECT_FUND_LIST_CODE_FILE)):
+        groups = []
+        for fund_code in tqdm(self.load(self.ALL_MARKET_FUND_INFO_FILE)["基金代码"].tolist()):
             try:
                 fund_data = xa.fundinfo(fund_code, fetch=False, save=False)
                 fund_data.price.reset_index(drop=True, inplace=True)
@@ -65,43 +66,31 @@ class Task(object):
                 fund_data = fund_data.price
                 fund_data.loc[:, "code"] = fund_code
                 fund_data = fund_data.loc[fund_data["date"] >= fund_day_start]
-                fund_history.append(fund_data)
-            except xa.exceptions.ParserFailure as e:
+                group = fund_data
+                group.sort_values("date", inplace=True)
+                group.loc[:, "netvalue"] = (group["netvalue"] - group["netvalue"].shift(periods=1)) / group[
+                    "netvalue"].shift(periods=1)
+                group.dropna(axis=0, inplace=True)
+                group.loc[:, 'MA3'] = group["netvalue"].rolling(window=3).mean()
+                group.sort_values('date', ascending=False, inplace=True)
+                down_count = 0
+                for ele in group["MA3"]:
+                    if ele < 0:
+                        down_count += 1
+                    else:
+                        break
+                groups.append(
+                    (fund_code, down_count, group.loc[group.index[0], "MA3"], group.loc[group.index[0], "RSI30"]))
+            except Exception as e:
                 continue
-        fund_history = pd.concat(fund_history, axis=0)
+        fund_history = pd.DataFrame(groups, columns=['code', 'down_count', 'MA3', 'RSI30'])
+        fund_history.sort_values("down_count", ascending=False, inplace=True)
+        fund_em_fund_name_df = task.load(task.ALL_MARKET_FUND_INFO_FILE)
+        fund_history = fund_history.merge(fund_em_fund_name_df, left_on='code', right_on='基金代码')
+        fund_history = fund_history.loc[:, ['基金代码', '基金简称', '基金类型', 'down_count', 'MA3', 'RSI30']]
+        fund_history = fund_history.loc[
+            (~fund_history['基金类型'].isin(["债券型", '定开债券'])) & (~fund_history['基金简称'].str.contains("债|年|月|量化"))]
         joblib.dump(fund_history, self.FUND_HISTORY_DATA_FILE)
-        return self
-
-    def get_buy_point(self):
-        '''
-        运行代码
-        '''
-        fund_history = self.load(self.FUND_HISTORY_DATA_FILE)
-
-        groups = []
-        for name, group in tqdm(fund_history.groupby(["code"], as_index=False)):
-            group.sort_values("date", inplace=True)
-            group.loc[:, "netvalue"] = (group["netvalue"] - group["netvalue"].shift(periods=1)) / group[
-                "netvalue"].shift(
-                periods=1)
-            group.dropna(axis=0, inplace=True)
-            group.loc[:, 'MA3'] = group["netvalue"].rolling(window=3).mean()
-            group.sort_values('date', ascending=False, inplace=True)
-            down_count = 0
-            for ele in group["MA3"]:
-                if ele < 0:
-                    down_count += 1
-                else:
-                    break
-            groups.append((name, down_count, group.loc[group.index[0], "RSI30"]))
-        result = pd.DataFrame(groups, columns=['code', 'down_count', "RSI30"])
-        all_fund_info = self.load(self.ALL_MARKET_FUND_INFO_FILE).loc[:, ['基金代码', '基金简称']]
-        result.sort_values("down_count", ascending=False, inplace=True)
-        result = result.merge(all_fund_info, left_on="code", right_on="基金代码")
-        result = result.loc[:, ['code', '基金简称', 'down_count', "RSI30"]]
-        result.columns = ['基金代码', '基金名称', '下跌次数', "RSI30"]
-        joblib.dump(result, fund_buy_point)
-        print("finish calculate down count!")
         return self
 
 
@@ -109,12 +98,23 @@ task = Task()
 
 
 def run_task():
-    task.get_fund_list().get_fund_history().get_buy_point()
+    task.get_fund_list().get_fund_history()
+
+
+def get_schedule_time():
+    now = arrow.now()
+    distrinct_now = arrow.now("Asia/Shanghai")
+    schedule_time = datetime.datetime(year=now.datetime.year,
+                                      month=now.datetime.month,
+                                      day=now.datetime.day,
+                                      hour=7,
+                                      minute=0) - (distrinct_now - now)
+    return schedule_time.strftime('%H:%M')
 
 
 if __name__ == '__main__':
     run_task()
-    schedule.every().day.at("09:00").do(run_task)
+    schedule.every().day.at(get_schedule_time()).do(run_task)
     while True:
         schedule.run_pending()
         time.sleep(1)
