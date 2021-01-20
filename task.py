@@ -58,7 +58,7 @@ class Task(object):
 
         # 获取数据
         groups = []
-        for fund_code in tqdm(self.load(self.ALL_MARKET_FUND_INFO_FILE)["基金代码"].tolist()):
+        for fund_code in tqdm(self.load(self.SELECT_FUND_LIST_CODE_FILE)):
             try:
                 fund_data = xa.fundinfo(fund_code, fetch=False, save=False)
                 fund_data.price.reset_index(drop=True, inplace=True)
