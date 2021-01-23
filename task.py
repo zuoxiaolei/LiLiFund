@@ -8,6 +8,7 @@ import datetime
 import time
 from tqdm import tqdm
 import arrow
+import pytz
 
 home_dir = Path(__file__).parent
 data_dir = home_dir / 'data'
@@ -104,11 +105,15 @@ def run_task():
 def get_schedule_time():
     now = arrow.now()
     distrinct_now = arrow.now("Asia/Shanghai")
+    time_delta = now - distrinct_now
     schedule_time = datetime.datetime(year=now.datetime.year,
                                       month=now.datetime.month,
                                       day=now.datetime.day,
                                       hour=7,
-                                      minute=0) - (distrinct_now - now)
+                                      minute=0, tzinfo=pytz.timezone("Asia/Shanghai")) + time_delta
+    print("#" * 128)
+    print("server now time is {} and now Shanghai time is {}".format(now, distrinct_now))
+    print("schedule time is {}".format(schedule_time.strftime('%H:%M')))
     return schedule_time.strftime('%H:%M')
 
 
